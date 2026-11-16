@@ -1,11 +1,12 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IInsumo extends Document {
+  tenantId: mongoose.Types.ObjectId; // 👈 NUEVO
   nombre: string;
-  categoria: string; // ej: 'Tintas', 'Envases', 'Cajas', 'Papelería'
-  costo: number;     // Cuánto te costó el paquete/bote completo
-  cantidadPaquete: number; // ej: 1000 (ml), 10 (unidades), 1 (kg)
-  unidadMedida: string;    // ej: 'ml', 'unidades', 'kg', 'mts', 'hojas'
+  categoria: string;
+  costo: number;
+  cantidadPaquete: number;
+  unidadMedida: string;
   stockActual: number;
   activo: boolean;
   creadoPor: string;
@@ -13,6 +14,7 @@ export interface IInsumo extends Document {
 
 const InsumoSchema = new Schema<IInsumo>(
   {
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
     nombre: { type: String, required: true, trim: true },
     categoria: { type: String, required: true, trim: true },
     costo: { type: Number, required: true, min: 0 },
@@ -20,12 +22,11 @@ const InsumoSchema = new Schema<IInsumo>(
     unidadMedida: { type: String, required: true, trim: true },
     stockActual: { type: Number, required: true, default: 0 },
     activo: { type: Boolean, default: true },
-    creadoPor: { type: String, required: true } // ID del admin/vendedor
+    creadoPor: { type: String, required: true }
   },
   { timestamps: true }
 );
 
-// Índice para búsquedas rápidas por nombre o categoría
-InsumoSchema.index({ nombre: 'text', categoria: 'text' });
+InsumoSchema.index({ tenantId: 1, nombre: 'text', categoria: 'text' });
 
 export default mongoose.models.Insumo || mongoose.model<IInsumo>('Insumo', InsumoSchema);

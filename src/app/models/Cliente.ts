@@ -1,6 +1,7 @@
 import { Schema, model, models } from 'mongoose';
 
 const ClienteSchema = new Schema({
+  tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
   nombre: { type: String, required: true, trim: true },
   apellido: { type: String, default: '', trim: true },
   telefono: { type: String, required: true, trim: true },
@@ -13,18 +14,19 @@ const ClienteSchema = new Schema({
   },
   direccion: { type: String, trim: true },
   ciudad: { type: String, trim: true },
-  notas: { type: String, trim: true }, // Campo flexible para alergias, gustos, referidos, etc.
+  notas: { type: String, trim: true },
   activo: { type: Boolean, default: true },
-  origen: { type: String, default: 'web' } // web, instagram, presencial, etc.
+  origen: { type: String, default: 'web' }
 }, {
   timestamps: true
 });
 
-// Evitar duplicados de teléfonos activos
+// Verificar duplicados DENTRO del mismo tenant
 ClienteSchema.pre('save', async function (next) {
   if (this.isModified('telefono') || this.isNew) {
     const ClienteModel = this.constructor as any;
     const existing = await ClienteModel.findOne({
+      tenantId: this.tenantId, // 👈 Solo buscar dentro del mismo tenant
       telefono: this.telefono,
       _id: { $ne: this._id },
       activo: true

@@ -9,11 +9,12 @@ interface IInsumoUsado {
 }
 
 export interface IProducto extends Document {
+  tenantId: mongoose.Types.ObjectId; // 👈 NUEVO CAMPO
   nombre: string;
   descripcion: string;
   categoria: string;
-  subcategoria: string; // 👈 NUEVO CAMPO
-  stock: number; // 👈 NUEVO CAMPO
+  subcategoria: string;
+  stock: number;
   insumos: IInsumoUsado[];
   tiempoManoDeObraMinutos: number;
   valorHoraManoDeObra: number;
@@ -34,10 +35,11 @@ export interface IProducto extends Document {
 
 const ProductoSchema = new Schema<IProducto>(
   {
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
     nombre: { type: String, required: true, trim: true },
     descripcion: { type: String, required: true },
     categoria: { type: String, required: true },
-    subcategoria: { type: String, default: '' }, // 👈 NUEVO CAMPO
+    subcategoria: { type: String, default: '' },
     insumos: [{
       insumoId: { type: Schema.Types.ObjectId, ref: 'Insumo', required: true },
       cantidadUsada: { type: Number, required: true, min: 0.01 },
@@ -45,7 +47,7 @@ const ProductoSchema = new Schema<IProducto>(
       costoUnitarioCalculado: { type: Number },
       subtotalCalculado: { type: Number }
     }],
-    stock: { type: Number, default: 0 }, // 👈 NUEVO CAMPO
+    stock: { type: Number, default: 0 },
     tiempoManoDeObraMinutos: { type: Number, default: 0 },
     valorHoraManoDeObra: { type: Number, default: 0 },
     margenGananciaPorcentaje: { type: Number, required: true, min: 0 },
@@ -64,5 +66,8 @@ const ProductoSchema = new Schema<IProducto>(
   },
   { timestamps: true }
 );
+
+// Índice compuesto para búsquedas rápidas por tenant + categoría
+ProductoSchema.index({ tenantId: 1, categoria: 1, activo: 1 });
 
 export default mongoose.models.Producto || mongoose.model<IProducto>('Producto', ProductoSchema);

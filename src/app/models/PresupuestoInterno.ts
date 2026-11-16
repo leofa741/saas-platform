@@ -1,8 +1,7 @@
-import { Schema, model, models, Document } from 'mongoose';
+import mongoose, { Schema, model, models, Document } from 'mongoose';
 
-// Interfaz para los insumos dentro del presupuesto
 export interface IInsumoPresupuesto {
-  id: string; // Puede ser el _id de la BD o un string 'custom-xxx'
+  id: string;
   nombre: string;
   unidadMedida: string;
   costoUnitario: number;
@@ -11,8 +10,8 @@ export interface IInsumoPresupuesto {
   esPersonalizado: boolean;
 }
 
-// Interfaz principal del documento
 export interface IPresupuestoInterno extends Document {
+  tenantId: mongoose.Types.ObjectId; // 👈 NUEVO
   nombreProyecto: string;
   notasInternas?: string;
   insumos: IInsumoPresupuesto[];
@@ -26,7 +25,6 @@ export interface IPresupuestoInterno extends Document {
   updatedAt: Date;
 }
 
-// Schema del insumo (sin _id propio para que sea un subdocumento limpio)
 const InsumoPresupuestoSchema = new Schema<IInsumoPresupuesto>({
   id: { type: String, required: true },
   nombre: { type: String, required: true },
@@ -37,8 +35,8 @@ const InsumoPresupuestoSchema = new Schema<IInsumoPresupuesto>({
   esPersonalizado: { type: Boolean, default: false }
 }, { _id: false });
 
-// Schema principal
 const PresupuestoInternoSchema = new Schema<IPresupuestoInterno>({
+  tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
   nombreProyecto: { type: String, required: true, trim: true },
   notasInternas: { type: String, default: '' },
   insumos: { type: [InsumoPresupuestoSchema], required: true },
@@ -52,8 +50,7 @@ const PresupuestoInternoSchema = new Schema<IPresupuestoInterno>({
   timestamps: true 
 });
 
-// Índice para búsquedas rápidas por usuario y fecha
-PresupuestoInternoSchema.index({ creadoPor: 1, createdAt: -1 });
+PresupuestoInternoSchema.index({ tenantId: 1, creadoPor: 1, createdAt: -1 });
 
 const PresupuestoInterno = models.PresupuestoInterno || model<IPresupuestoInterno>('PresupuestoInterno', PresupuestoInternoSchema);
 export default PresupuestoInterno;

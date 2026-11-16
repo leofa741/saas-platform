@@ -1,6 +1,7 @@
 import { Schema, model, models, Document } from 'mongoose';
 
 export interface IDisenoPersonalizado extends Document {
+  tenantId: Schema.Types.ObjectId; // 👈 NUEVO
   cliente: Schema.Types.ObjectId;
   nombreCliente: string;
   emailCliente: string;
@@ -25,15 +26,15 @@ export interface IDisenoPersonalizado extends Document {
 }
 
 const MensajeSchema = new Schema({
-  autor: { type: String, required: true }, // 'cliente' o 'admin'
+  autor: { type: String, required: true },
   nombreAutor: { type: String, required: true },
   contenido: { type: String, required: true },
-  imagen: { type: String }, // Para vistas previas
+  imagen: { type: String },
   createdAt: { type: Date, default: Date.now }
 });
 
 const DisenoPersonalizadoSchema = new Schema({
-  // 👤 Cliente
+  tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
   cliente: {
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -43,77 +44,42 @@ const DisenoPersonalizadoSchema = new Schema({
   nombreCliente: { type: String, required: true },
   emailCliente: { type: String, required: true },
   telefonoCliente: { type: String },
-
-  // 🎨 Detalles del diseño
   titulo: { type: String, required: true, trim: true },
-  
-  // ✅ ACTUALIZADO: Nuevos valores para bijouterie y macramé + antiguos para compatibilidad
   tipoProducto: { 
     type: String, 
     required: true,
     enum: [
-      'collar_piedras',
-      'pulsera_macrame',
-      'aros_colgantes',
-      'decoracion_pared',
-      'set_regalo',
-      'taza', 
-      'remera', 
-      'llavero_3d', 
-      'figura_3d', 
-      'sublimacion', 
-      'candy', 
-      'decoracion', 
-      'otro'
+      'collar_piedras', 'pulsera_macrame', 'aros_colgantes', 'decoracion_pared',
+      'set_regalo', 'taza', 'remera', 'llavero_3d', 'figura_3d', 
+      'sublimacion', 'candy', 'decoracion', 'otro'
     ]
   },
-  
   descripcion: { type: String, required: true },
   colores: { type: String },
   textoDeseado: { type: String },
   cantidad: { type: Number, default: 1 },
   fechaLimite: { type: Date },
   presupuestoEstimado: { type: Number },
-
-  // 🖼️ Imágenes de referencia
-  imagenesReferencia: [{ type: String }], // URLs de Cloudinary
-
-  // 📊 Estado del diseño
+  imagenesReferencia: [{ type: String }],
   estado: {
     type: String,
     enum: [
-      'pendiente',           // Recién creado
-      'en_revision',         // Admin lo está viendo
-      'consulta',            // Admin pidió más info
-      'vista_previa_enviada', // Se envió preview
-      'aprobado',            // Cliente aprobó
-      'en_produccion',       // Fabricando
-      'completado',          // Terminado
-      'rechazado'            // No se puede hacer
+      'pendiente', 'en_revision', 'consulta', 'vista_previa_enviada',
+      'aprobado', 'en_produccion', 'completado', 'rechazado'
     ],
     default: 'pendiente'
   },
-
-  // 💬 Conversación
   mensajes: [MensajeSchema],
-
-  // 💰 Si se convierte en pedido
-  pedidoGenerado: {
-    type: Schema.Types.ObjectId,
-    ref: 'Pedido'
-  },
+  pedidoGenerado: { type: Schema.Types.ObjectId, ref: 'Pedido' },
   precioFinal: { type: Number },
-
-  // ⏱️ Timestamps
   fechaRespuestaAdmin: { type: Date },
   fechaAprobacionCliente: { type: Date }
 }, {
   timestamps: true
 });
 
-// Índices para búsquedas eficientes
-DisenoPersonalizadoSchema.index({ cliente: 1, createdAt: -1 });
-DisenoPersonalizadoSchema.index({ estado: 1 });
+DisenoPersonalizadoSchema.index({ tenantId: 1, cliente: 1, createdAt: -1 });
+DisenoPersonalizadoSchema.index({ tenantId: 1, estado: 1 });
 
 const DisenoPersonalizado = models.DisenoPersonalizado || model<IDisenoPersonalizado>('DisenoPersonalizado', DisenoPersonalizadoSchema);
 export default DisenoPersonalizado;

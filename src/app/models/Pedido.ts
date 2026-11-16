@@ -9,6 +9,7 @@ interface IProductoPedido {
 }
 
 export interface IPedido extends Document {
+  tenantId: mongoose.Types.ObjectId; // 👈 NUEVO CAMPO
   clienteNombre: string;
   clienteTelefono: string;
   productos: IProductoPedido[];
@@ -23,6 +24,7 @@ export interface IPedido extends Document {
 
 const PedidoSchema = new Schema<IPedido>(
   {
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // 👈 NUEVO
     clienteNombre: { type: String, required: true, trim: true },
     clienteTelefono: { type: String, required: true, trim: true },
     productos: [{
@@ -42,15 +44,17 @@ const PedidoSchema = new Schema<IPedido>(
     saldoPendiente: { type: Number, required: true, min: 0 },
     fechaEntregaEstimada: { type: Date, required: true },
     notas: { type: String, trim: true },
-    creadoPor: { type: String, required: true } // ID del admin/vendedor
+    creadoPor: { type: String, required: true }
   },
   { timestamps: true }
 );
 
-// Middleware para calcular automáticamente el saldo pendiente antes de guardar
 PedidoSchema.pre('save', function(next) {
   this.saldoPendiente = Math.max(0, this.total - this.seña);
   next();
 });
+
+// Índice para búsquedas rápidas por tenant + estado
+PedidoSchema.index({ tenantId: 1, estado: 1 });
 
 export default mongoose.models.Pedido || mongoose.model<IPedido>('Pedido', PedidoSchema);
