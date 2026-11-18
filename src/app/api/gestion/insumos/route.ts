@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongoose';
 import InsumoModel from '@/app/models/Insumo';
+import ProductoModel from '@/app/models/Producto'; // 👈 Renombrado para consistencia
 import { verifyAdmin } from '@/app/lib/auth';
-import Producto from '@/app/models/Producto';
 
-// ✅ GET: Obtener lista de insumos
+// ✅ GET: Obtener lista de insumos DE ESTE TENANT
 export async function GET(req: NextRequest) {
   try {
     const admin = await verifyAdmin(req);
     if (!admin) return NextResponse.json({ message: 'No autorizado' }, { status: 403 });
 
     await connectDB();
-    const insumos = await InsumoModel.find({ activo: true }).sort({ createdAt: -1 });
+    
+    // 👈 NUEVO SAAS: Filtrar estrictamente por el tenantId del admin
+    const insumos = await InsumoModel.find({ 
+      activo: true, 
+      tenantId: admin.tenantId 
+    }).sort({ createdAt: -1 });
+    
     return NextResponse.json({ success: true, insumos }, { status: 200 });
   } catch (error) {
     console.error('❌ Error obteniendo insumos:', error);
@@ -33,7 +39,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Todos los campos obligatorios deben ser completados.' }, { status: 400 });
     }
 
+    // 👈 NUEVO SAAS: Asignar el tenantId al crear el insumo
     const nuevoInsumo = await InsumoModel.create({
+      tenantId: admin.tenantId,
       nombre: nombre.trim(),
       categoria: categoria.trim(),
       costo: Number(costo),
@@ -47,7 +55,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('❌ Error creando insumo:', error);
     if (error.code === 11000) {
-      return NextResponse.json({ message: 'Ya existe un insumo con ese nombre.' }, { status: 409 });
+      return NextResponse.json({ message: 'Ya existe un insumo con ese nombre en tu tienda.' }, { status: 409 });
     }
     return NextResponse.json({ message: 'Error interno del servidor' }, { status: 500 });
   }
@@ -68,9 +76,9 @@ export async function PUT(req: NextRequest) {
     const body = await req.json();
     const { nombre, categoria, costo, cantidadPaquete, unidadMedida, stockActual } = body;
 
-    // 1. Actualizar el insumo en la base de datos
-    const insumoActualizado = await InsumoModel.findByIdAndUpdate(
-      id,
+    // 👈 NUEVO SAAS 1: Verificar y actualizar SOLO si el insumo pertenece a este tenant
+    const insumoActualizado = await InsumoModel.findOneAndUpdate(
+      { _id: id, tenantId: admin.tenantId },
       {
         nombre: nombre?.trim(),
         categoria: categoria?.trim(),
@@ -83,11 +91,15 @@ export async function PUT(req: NextRequest) {
     );
 
     if (!insumoActualizado) {
-      return NextResponse.json({ message: 'Insumo no encontrado' }, { status: 404 });
+      return NextResponse.json({ message: 'Insumo no encontrado o no pertenece a tu tienda' }, { status: 404 });
     }
 
     // 2. 🔄 ACTUALIZACIÓN EN CASCADA: Buscar productos que usan este insumo
-    const productosAfectados = await Producto.find({ 'insumos.insumoId': id });
+    // 👈 NUEVO SAAS 2: Buscar SOLO productos de este tenant que usen este insumo
+    const productosAfectados = await ProductoModel.find({ 
+      'insumos.insumoId': id,
+      tenantId: admin.tenantId 
+    });
 
     if (productosAfectados.length > 0) {
       const nuevoCostoUnitario = insumoActualizado.costo / insumoActualizado.cantidadPaquete;
@@ -122,17 +134,16 @@ export async function PUT(req: NextRequest) {
         const nuevoPrecioSugerido = nuevoCostoTotalProduccion + (nuevoCostoTotalProduccion * margenDecimal);
         
         // 3. 💡 CLAVE: Actualizamos el precio final de venta para que suba junto con el insumo
-        // Esto protege el margen de ganancia de la emprendedora automáticamente.
         const nuevoPrecioFinal = nuevoPrecioSugerido;
 
         // 4. Guardar los cambios en el producto
-        await Producto.findByIdAndUpdate(prod._id, {
+        await ProductoModel.findByIdAndUpdate(prod._id, {
           insumos: insumosActualizados,
           costoTotalInsumos: nuevoCostoTotalInsumos,
           costoTotalProduccion: nuevoCostoTotalProduccion,
           precioSugerido: nuevoPrecioSugerido,
-          precioFinalManual: nuevoPrecioFinal, // <-- ¡AQUÍ SE ACTUALIZA EL PRECIO DE VENTA!
-          estaEnPerdida: false // Ya no está en pérdida porque ajustamos el precio al nuevo costo
+          precioFinalManual: nuevoPrecioFinal,
+          estaEnPerdida: false
         });
       }
     }
@@ -162,10 +173,14 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) return NextResponse.json({ message: 'ID del insumo es requerido' }, { status: 400 });
 
-    const insumoEliminado = await InsumoModel.findByIdAndDelete(id);
+    // 👈 NUEVO SAAS: Eliminar SOLO si el ID coincide con el tenantId del admin
+    const insumoEliminado = await InsumoModel.findOneAndDelete({ 
+      _id: id, 
+      tenantId: admin.tenantId 
+    });
 
     if (!insumoEliminado) {
-      return NextResponse.json({ message: 'Insumo no encontrado' }, { status: 404 });
+      return NextResponse.json({ message: 'Insumo no encontrado o no tienes permiso para eliminarlo' }, { status: 404 });
     }
 
     return NextResponse.json({ success: true, message: 'Insumo eliminado exitosamente' }, { status: 200 });

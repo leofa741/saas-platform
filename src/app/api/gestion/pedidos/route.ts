@@ -3,7 +3,7 @@ import connectDB from '@/app/lib/mongoose';
 import PedidoModel from '@/app/models/Pedido';
 import { verifyAdmin } from '@/app/lib/auth';
 
-// ✅ GET: Obtener lista de pedidos (con filtro opcional por estado)
+// ✅ GET: Obtener lista de pedidos DE ESTE TENANT (con filtro opcional por estado)
 export async function GET(req: NextRequest) {
   try {
     const admin = await verifyAdmin(req);
@@ -15,7 +15,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const estadoFilter = searchParams.get('estado');
 
-    const query: any = {};
+    // 👈 NUEVO SAAS: Filtro base obligatorio por tenantId
+    const query: any = { tenantId: admin.tenantId };
+    
     if (estadoFilter && estadoFilter !== 'todos') {
       query.estado = estadoFilter;
     }
@@ -62,19 +64,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ CORRECCIÓN CLAVE: Calcular explícitamente el saldo pendiente 
-    // para satisfacer la validación "required" del Schema de Mongoose.
     const totalNum = Number(total);
     const señaNum = Number(seña) || 0;
     const saldoPendienteNum = Math.max(0, totalNum - señaNum);
 
+    // 👈 NUEVO SAAS: Asignar el tenantId al crear el pedido
     const nuevoPedido = await PedidoModel.create({
+      tenantId: admin.tenantId, // 👈 FILTRO CRÍTICO
       clienteNombre: clienteNombre.trim(),
       clienteTelefono: clienteTelefono.trim(),
       productos,
       estado: estado || 'pendiente',
       total: totalNum,
       seña: señaNum,
-      saldoPendiente: saldoPendienteNum, // <-- Campo agregado explícitamente
+      saldoPendiente: saldoPendienteNum, 
       fechaEntregaEstimada: new Date(fechaEntregaEstimada),
       notas: notas?.trim() || '',
       creadoPor: admin.id
@@ -87,7 +90,6 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('❌ Error creando pedido:', error);
     
-    // Manejo de errores de validación de Mongoose para dar mensajes más claros
     if (error.name === 'ValidationError') {
       const errores = Object.values(error.errors).map((err: any) => err.message).join(', ');
       return NextResponse.json({ message: `Datos inválidos: ${errores}` }, { status: 400 });

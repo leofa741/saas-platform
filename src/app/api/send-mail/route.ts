@@ -1,9 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import TenantModel from '@/app/models/Tenant'; // 👈 NUEVO SAAS: Para obtener los datos de la tienda
 
-// ─────────────────────────────────────────────────────────────
-// 🔹 TIPOS PARA EL FORMULARIO (Pretty Witches)
-// ─────────────────────────────────────────────────────────────
 interface ContactForm {
   name: string;
   contact: string;
@@ -12,9 +10,6 @@ interface ContactForm {
   subject?: string;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 🔹 MAPEOS LEGIBLES PARA EL EMAIL
-// ─────────────────────────────────────────────────────────────
 const interestLabels: Record<string, string> = {
   general: 'Consulta general',
   sublimacion: 'Presupuesto de sublimación',
@@ -23,10 +18,7 @@ const interestLabels: Record<string, string> = {
   mayorista: 'Ventas mayoristas',
 };
 
-// ─────────────────────────────────────────────────────────────
-// 🔹 HANDLER PRINCIPAL
-// ─────────────────────────────────────────────────────────────
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const body: ContactForm = await req.json();
     const { name, contact, interest, message } = body;
@@ -37,6 +29,17 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    // 👈 1. NUEVO SAAS: Detectar a qué tienda pertenece esta consulta
+    const host = req.headers.get('host') || 'localhost';
+    const subdomain = host.split('.')[0];
+    
+    // Buscamos la configuración de esta tienda específica
+    const tenant = await TenantModel.findOne({ subdomain, activo: true });
+    
+    // Si existe el tenant, usamos sus datos. Si no, usamos un fallback global del SaaS.
+    const brandName = tenant ? tenant.nombre : (process.env.BRAND_NAME || 'EmprendeFácil');
+    const recipientEmail = tenant ? tenant.email : (process.env.MAILER_ADMIN_LOG || process.env.MAILER_EMAIL);
 
     const transporter = nodemailer.createTransport({
       service: process.env.MAILER_SERVICE || 'gmail',
@@ -51,21 +54,20 @@ export async function POST(req: Request) {
 
     await transporter.verify();
 
-    const emailContent = buildEmailContent(body);
+    const emailContent = buildEmailContent(body, brandName);
 
     const mailOptions = {
-      // ✅ CAMBIO CLAVE: Nombre del remitente actualizado
-      from: `"Pretty Witches" <${process.env.MAILER_EMAIL}>`,
-      to: process.env.MAILER_EMAIL,
-      cc: process.env.MAILER_CC ? process.env.MAILER_CC.split(',').map((e: string) => e.trim()) : undefined,
+      from: `"${brandName}" <${process.env.MAILER_EMAIL}>`,
+      to: recipientEmail, // 👈 2. NUEVO SAAS: Llega al dueño de ESTA tienda, no al global
+      replyTo: contact.includes('@') ? contact : undefined, // 👈 TRUCO DE ORO: Al dar "Responder", va directo al cliente
       subject: `✨ Nueva consulta: ${interestLabels[interest]} - ${name}`,
       html: emailContent,
-      text: buildTextContent(body),
+      text: buildTextContent(body, brandName),
     };
 
     await transporter.sendMail(mailOptions);
 
-    console.log(`✅ Email enviado: ${interest} - ${contact}`);
+    console.log(`✅ Email de contacto enviado a ${recipientEmail} para la tienda: ${brandName}`);
 
     return NextResponse.json({ 
       success: true, 
@@ -86,16 +88,16 @@ export async function POST(req: Request) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 🔹 PLANTILLA HTML PREMIUM (Paleta Alila Cremoso + Lujo Silencioso)
+// 🔹 PLANTILLA HTML DINÁMICA
 // ─────────────────────────────────────────────────────────────
-function buildEmailContent(data: ContactForm): string {
+function buildEmailContent(data: ContactForm, brandName: string): string {
   const { name, contact, interest, message } = data;
   
   const styles = {
     container: 'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 0; background-color: #FAF7F2;',
     header: 'background-color: #F5F3FF; padding: 32px 24px; text-align: center; border-bottom: 1px solid #E8DFD0;',
     headerTitle: 'color: #3D2B1F; font-size: 24px; font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.02em;',
-    headerSubtitle: 'color: #8B6F47; font-size: 14px; margin: 0; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;',
+    headerSubtitle: `color: #8B6F47; font-size: 14px; margin: 0; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;`,
     body: 'background: #FFFFFF; padding: 32px 24px; border: 1px solid #E8DFD0; border-top: none;',
     card: 'background: #FAF7F2; padding: 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #E8DFD0;',
     label: 'color: #8B6F47; font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; margin: 0 0 6px 0; font-weight: 700;',
@@ -114,13 +116,13 @@ function buildEmailContent(data: ContactForm): string {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Nueva consulta - Pretty Witches</title>
+      <title>Nueva consulta - ${brandName}</title>
     </head>
     <body style="${styles.container}">
       
       <div style="${styles.header}">
         <h1 style="${styles.headerTitle}">✨ Nueva Consulta</h1>
-        <p style="${styles.headerSubtitle}">Pretty Witches - Productos Personalizados</p>
+        <p style="${styles.headerSubtitle}">${brandName} - Productos Personalizados</p>
       </div>
 
       <div style="${styles.body}">
@@ -147,7 +149,7 @@ function buildEmailContent(data: ContactForm): string {
         <div style="${styles.divider}"></div>
 
         <div style="text-align: center; margin-top: 28px;">
-          <a href="mailto:${contact.includes('@') ? contact : ''}?subject=Re: Consulta Pretty Witches" 
+          <a href="mailto:${contact.includes('@') ? contact : ''}?subject=Re: Consulta ${brandName}" 
              style="${styles.button}">
             Responder a ${name}
           </a>
@@ -156,8 +158,7 @@ function buildEmailContent(data: ContactForm): string {
       </div>
 
       <div style="${styles.footer}">
-        <p style="margin: 0 0 8px 0; font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;">Pretty Witches</p>
-        <p style="margin: 0 0 4px 0;">📧 ${process.env.MAILER_EMAIL}</p>
+        <p style="margin: 0 0 8px 0; font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;">${brandName}</p>
         <p style="margin: 0;">Este mensaje fue enviado desde el formulario de contacto web.</p>
       </div>
 
@@ -169,11 +170,11 @@ function buildEmailContent(data: ContactForm): string {
 // ─────────────────────────────────────────────────────────────
 // 🔹 VERSIÓN TEXTO PLANO (FALLBACK)
 // ─────────────────────────────────────────────────────────────
-function buildTextContent(data: ContactForm): string {
+function buildTextContent(data: ContactForm, brandName: string): string {
   const { name, contact, interest, message } = data;
   
   return `
-NUEVA CONSULTA - PRETTY WITCHES ✨
+NUEVA CONSULTA - ${brandName.toUpperCase()} ✨
 ========================================================
 
 INTERÉS: ${interestLabels[interest] || interest}
@@ -187,6 +188,6 @@ ${message}
 
 ---
 Responder a: ${contact}
-Enviado desde: Formulario web Pretty Witches
+Enviado desde: Formulario web ${brandName}
   `.trim();
 }

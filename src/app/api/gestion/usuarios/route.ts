@@ -13,8 +13,11 @@ export async function GET(req: NextRequest) {
 
     await connectDB();
     
-    // Obtenemos todos los usuarios EXCLUYENDO la contraseña y tokens de reset
-    const users = await UserModel.find()
+    // 👈 NUEVO SAAS: Filtrar por tenantId (a menos que sea superadmin, que puede ver todo el sistema)
+    const query = admin.role === 'superadmin' ? {} : { tenantId: admin.tenantId };
+
+    // Obtenemos los usuarios EXCLUYENDO la contraseña y tokens de reset
+    const users = await UserModel.find(query)
       .select('-password -resetPasswordToken -resetPasswordExpires')
       .sort({ createdAt: -1 });
 

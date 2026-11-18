@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongoose';
 import ProductoModel from '@/app/models/Producto';
+import { verifyAdmin } from '@/app/lib/auth';
 
 export async function GET(req: NextRequest) {
   console.log("==================================================");
@@ -8,14 +9,23 @@ export async function GET(req: NextRequest) {
   console.log("==================================================");
   
   try {
+    // 👈 NUEVO SAAS: Verificar que sea un admin y obtener su tenantId
+    const admin = await verifyAdmin(req);
+    if (!admin) {
+      return NextResponse.json({ message: 'No autorizado' }, { status: 403 });
+    }
+
     await connectDB();
     
-    // 1. OBTENER TODOS los productos activos (sin filtros raros)
-    const todosLosProductos = await ProductoModel.find({ activo: true })
+    // 👈 NUEVO SAAS: Obtener solo los productos activos DE ESTE TENANT
+    const todosLosProductos = await ProductoModel.find({ 
+      activo: true, 
+      tenantId: admin.tenantId 
+    })
       .select('categoria subcategoria')
       .lean();
     
-    console.log("📦 PRODUCTOS ENCONTRADOS EN LA BD:", JSON.stringify(todosLosProductos, null, 2));
+    console.log(`📦 PRODUCTOS ENCONTRADOS EN LA BD (Tenant: ${admin.tenantId}): ${todosLosProductos.length}`);
 
     // 2. AGRUPAR manualmente (a prueba de fallos, sin distinct ni regex)
     const mapaCategorias = new Map<string, Set<string>>();

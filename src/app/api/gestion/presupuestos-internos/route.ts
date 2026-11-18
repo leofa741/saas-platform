@@ -6,7 +6,6 @@ import PresupuestoInternoModel from '@/app/models/PresupuestoInterno';
 // ✅ GET: Listar todos O obtener uno solo por ID
 export async function GET(req: NextRequest) {
   try {
-    // 🔑 CORRECCIÓN: Quitar el 'secret' forzado. Usará NEXTAUTH_SECRET automáticamente
     const token = await getToken({ req });
     if (!token) return NextResponse.json({ message: 'No autorizado' }, { status: 401 });
 
@@ -14,19 +13,39 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 
+    // 👈 NUEVO SAAS: Extraer tenantId y rol del token
+    const tenantId = (token as any).tenantId;
+    const role = token.role as string;
+    const isSuperAdmin = role === 'superadmin';
+    const isAdmin = ['admin', 'superadmin', 'vendedor'].includes(role);
+
     // Si viene un ID, devolver un solo documento
     if (id) {
-      const presupuesto = await PresupuestoInternoModel.findById(id).lean();
+      // 👈 NUEVO SAAS: Buscar por ID Y por tenantId (a menos que sea superadmin)
+      const query = isSuperAdmin ? { _id: id } : { _id: id, tenantId };
+      const presupuesto = await PresupuestoInternoModel.findOne(query).lean();
+      
       if (!presupuesto) {
-        return NextResponse.json({ message: 'Presupuesto no encontrado' }, { status: 404 });
+        return NextResponse.json({ message: 'Presupuesto no encontrado o no tienes permiso' }, { status: 404 });
       }
       return NextResponse.json({ success: true, presupuesto }, { status: 200 });
     }
 
-    // Si no viene ID, devolver la lista (Admin ve todo, User ve solo los suyos)
-    const isAdmin = ['admin', 'superadmin', 'vendedor'].includes(token.role as string);
-    const query = isAdmin ? {} : { creadoPor: token.id };
-    const presupuestos = await PresupuestoInternoModel.find(query).sort({ createdAt: -1 }).lean();
+    // Si no viene ID, devolver la lista con aislamiento de tenant
+    let listQuery: any = {};
+    
+    if (isSuperAdmin) {
+      listQuery = {}; // Superadmin ve todo el sistema
+    } else {
+      listQuery = { tenantId }; // Admin/Vendedor ve todo SU tenant
+      if (!isAdmin) {
+        listQuery.creadoPor = token.id; // Usuario normal solo ve los suyos dentro de su tenant
+      }
+    }
+
+    const presupuestos = await PresupuestoInternoModel.find(listQuery)
+      .sort({ createdAt: -1 })
+      .lean();
 
     return NextResponse.json({ success: true, presupuestos }, { status: 200 });
   } catch (error) {
@@ -49,7 +68,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Nombre y al menos un insumo son obligatorios.' }, { status: 400 });
     }
 
+    // 👈 NUEVO SAAS: Asignar tenantId al crear el presupuesto
     const nuevoPresupuesto = await PresupuestoInternoModel.create({
+      tenantId: (token as any).tenantId, // 👈 FILTRO CRÍTICO
       nombreProyecto: nombreProyecto.trim(),
       notasInternas: notasInternas?.trim() || '',
       insumos,
@@ -93,8 +114,21 @@ export async function PUT(req: NextRequest) {
       esPersonalizado: Boolean(p.esPersonalizado)
     }));
 
-    const presupuestoActualizado = await PresupuestoInternoModel.findByIdAndUpdate(
-      id,
+    const tenantId = (token as any).tenantId;
+    const role = token.role as string;
+    const isSuperAdmin = role === 'superadmin';
+
+    // 👈 NUEVO SAAS: Verificar que el presupuesto exista y pertenezca a este tenant
+    const query = isSuperAdmin ? { _id: id } : { _id: id, tenantId };
+    const presupuestoExistente = await PresupuestoInternoModel.findOne(query);
+
+    if (!presupuestoExistente) {
+      return NextResponse.json({ message: 'Presupuesto no encontrado o no tienes permiso para editarlo' }, { status: 404 });
+    }
+
+    // 👈 NUEVO SAAS: Actualizar SOLO si coincide el ID y el tenantId
+    const presupuestoActualizado = await PresupuestoInternoModel.findOneAndUpdate(
+      { _id: id, tenantId }, // Filtro de seguridad
       { 
         $set: { 
           nombreProyecto, 
@@ -109,10 +143,6 @@ export async function PUT(req: NextRequest) {
       },
       { new: true, runValidators: true }
     );
-
-    if (!presupuestoActualizado) {
-      return NextResponse.json({ message: 'Presupuesto no encontrado' }, { status: 404 });
-    }
 
     return NextResponse.json({ 
       success: true, 
@@ -137,7 +167,18 @@ export async function DELETE(req: NextRequest) {
     const id = searchParams.get('id');
     if (!id) return NextResponse.json({ message: 'ID requerido' }, { status: 400 });
 
-    await PresupuestoInternoModel.findByIdAndDelete(id);
+    const tenantId = (token as any).tenantId;
+    const role = token.role as string;
+    const isSuperAdmin = role === 'superadmin';
+
+    // 👈 NUEVO SAAS: Eliminar SOLO si coincide el ID y el tenantId
+    const query = isSuperAdmin ? { _id: id } : { _id: id, tenantId };
+    const presupuestoEliminado = await PresupuestoInternoModel.findOneAndDelete(query);
+
+    if (!presupuestoEliminado) {
+      return NextResponse.json({ message: 'Presupuesto no encontrado o no tienes permiso para eliminarlo' }, { status: 404 });
+    }
+
     return NextResponse.json({ success: true, message: 'Eliminado exitosamente' }, { status: 200 });
   } catch (error: any) {
     console.error('❌ Error eliminando presupuesto:', error);

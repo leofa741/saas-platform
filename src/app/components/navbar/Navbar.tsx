@@ -74,18 +74,19 @@ export default function Navbar() {
     setIsMounted(true);
   }, []);
 
-  // ✅ Fetch de categorías jerárquicas
+  // ✅ Fetch de categorías jerárquicas (Usa la API pública unificada)
   useEffect(() => {
     const fetchCategorias = async () => {
       try {
-        const res = await fetch('/api/gestion/categorias');
+        // 👇 Apuntamos a la API pública unificada
+        const res = await fetch('/api/public/categorias'); 
         const data = await res.json();
         
-        // 👇👇👇 AGREGADO: Esto mostrará en la consola (F12) exactamente qué recibe el Navbar
         console.log("🔍 DATOS RECIBIDOS POR EL NAVBAR:", data);
 
         if (data.success) {
-          setCategorias(data.categorias);
+          // 👇 Leemos la propiedad 'categorias' que contiene la jerarquía con 'hijas'
+          setCategorias(data.categorias); 
         }
       } catch (error) {
         console.error('Error cargando categorías en Navbar:', error);

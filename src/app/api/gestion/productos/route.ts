@@ -4,7 +4,7 @@ import ProductoModel from '@/app/models/Producto';
 import InsumoModel from '@/app/models/Insumo';
 import { verifyAdmin } from '@/app/lib/auth';
 
-// ✅ GET: Obtener todos los productos (¡ESTO ES LO QUE FALTABA Y CAUSABA EL ERROR 405!)
+// ✅ GET: Obtener todos los productos DE ESTE TENANT
 export async function GET(req: NextRequest) {
     try {
         const admin = await verifyAdmin(req);
@@ -14,8 +14,10 @@ export async function GET(req: NextRequest) {
 
         await connectDB();
         
-        // Obtenemos todos los productos ordenados por fecha de creación (más reciente primero)
-        const productos = await ProductoModel.find({}).sort({ createdAt: -1 }).lean();
+        // 👈 NUEVO SAAS: Filtrar estrictamente por el tenantId del admin
+        const productos = await ProductoModel.find({ tenantId: admin.tenantId })
+            .sort({ createdAt: -1 })
+            .lean();
 
         return NextResponse.json({ success: true, productos }, { status: 200 });
     } catch (error) {
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
         const {
             nombre, descripcion, categoria, subcategoria, insumos, 
             tiempoManoDeObraMinutos, valorHoraManoDeObra, margenGananciaPorcentaje, 
-            precioFinalManual, imagen, destacado, nuevo
+            precioFinalManual, imagen, destacado, nuevo, stock, precioMayorista
         } = body;
 
         let costoTotalInsumos = 0;
@@ -44,8 +46,15 @@ export async function POST(req: NextRequest) {
 
         if (insumos && Array.isArray(insumos) && insumos.length > 0) {
             for (const item of insumos) {
-                const insumo = await InsumoModel.findById(item.insumoId);
-                if (!insumo) return NextResponse.json({ message: `Insumo no encontrado: ${item.insumoId}` }, { status: 400 });
+                // 👈 NUEVO SAAS: Verificar que el insumo pertenezca al MISMO tenant
+                const insumo = await InsumoModel.findOne({ 
+                    _id: item.insumoId, 
+                    tenantId: admin.tenantId 
+                });
+                
+                if (!insumo) {
+                    return NextResponse.json({ message: `Insumo no encontrado o no pertenece a tu tienda: ${item.insumoId}` }, { status: 400 });
+                }
 
                 const costoPorUnidad = insumo.costo / insumo.cantidadPaquete;
                 const subtotal = costoPorUnidad * item.cantidadUsada;
@@ -69,10 +78,13 @@ export async function POST(req: NextRequest) {
         const estaEnPerdida = precioFinal > 0 && precioFinal < costoTotalProduccion;
 
         const nuevoProducto = await ProductoModel.create({
+            tenantId: admin.tenantId, // 👈 NUEVO SAAS: Asignar al tenant
             nombre: nombre.trim(),
             descripcion: descripcion.trim(),
             categoria: categoria.trim(),
             subcategoria: subcategoria ? subcategoria.trim() : '',
+            stock: stock || 0,
+            precioMayorista: precioMayorista || 0,
             insumos: insumosDetallados,
             tiempoManoDeObraMinutos: tiempoManoDeObraMinutos || 0,
             valorHoraManoDeObra: valorHoraManoDeObra || 0,

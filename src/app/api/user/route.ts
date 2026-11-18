@@ -12,8 +12,6 @@ try {
     api_secret: process.env.CLOUDINARY_API_SECRET,
     secure: true
   });
-  
-  console.log('✅ Cloudinary configurado correctamente');
 } catch (error) {
   console.error('❌ Error configurando Cloudinary:', error);
 }
@@ -26,8 +24,9 @@ export async function PUT(request: Request) {
     }
 
     const userId = session.user.id;
-    const formData = await request.formData();
+    const sessionTenantId = (session.user as any).tenantId; // 👈 NUEVO: Obtenemos el tenant de la sesión
 
+    const formData = await request.formData();
     const name = formData.get('name') as string;
     const lastName = formData.get('lastName') as string;
     const address = formData.get('address') as string;
@@ -37,43 +36,33 @@ export async function PUT(request: Request) {
     const phone = formData.get('phone') as string;
     const imgFile = formData.get('img') as File;
 
-    const user = await User.findById(userId);
+    // 👈 NUEVO: Buscamos el usuario Y verificamos que pertenezca al tenant de la sesión
+    const user = await User.findOne({ _id: userId, tenantId: sessionTenantId });
+    
     if (!user) {
-      return NextResponse.json({ message: 'Usuario no encontrado' }, { status: 404 });
+      return NextResponse.json({ message: 'Usuario no encontrado o no pertenece a esta tienda' }, { status: 404 });
     }
 
     let imgUrl = user.img;
-    
-    // ✅ Solo subir si hay archivo nuevo
+
     if (imgFile && imgFile.size > 0) {
       try {
         const buffer = Buffer.from(await imgFile.arrayBuffer());
-
-        // ✅ Subir con método más robusto
         const uploadResult = await cloudinary.uploader.upload(
           `data:image/jpeg;base64,${buffer.toString('base64')}`,
           {
-            folder: 'profile_images',
+            folder: `tenants/${sessionTenantId}/profile_images`, // 👈 NUEVO: Organizar por tenant en Cloudinary
             resource_type: 'image',
             format: 'jpg',
-            transformation: [
-              { width: 500, height: 500, crop: 'fill', gravity: 'face' }
-            ]
+            transformation: [{ width: 500, height: 500, crop: 'fill', gravity: 'face' }]
           }
         );
-
         imgUrl = uploadResult.secure_url;
-        console.log('✅ Imagen subida a Cloudinary:', imgUrl);
       } catch (uploadError: any) {
         console.error('❌ Error subiendo a Cloudinary:', uploadError);
-        
-        // ✅ Si falla Cloudinary, continuar sin imagen
-        console.log('⚠️ Continuando sin actualizar imagen');
-        // No lanzar error, continuar con la actualización
       }
     }
 
-    // ✅ Actualizar solo los campos que han cambiado
     const updates: Record<string, any> = {};
     if (name && name !== user.name) updates.name = name;
     if (lastName && lastName !== user.lastName) updates.lastName = lastName;
@@ -88,10 +77,9 @@ export async function PUT(request: Request) {
       await User.findByIdAndUpdate(userId, updates, { new: true });
     }
 
-    // ✅ Obtener el usuario actualizado
-    const updatedUser = await User.findById(userId);
+    const updatedUser = await User.findById(userId).select('-password');
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       message: 'Perfil actualizado con éxito',
       user: {
         name: updatedUser.name,
@@ -109,10 +97,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     console.error('❌ Error en la actualización del perfil:', error);
     return NextResponse.json(
-      { 
-        message: error instanceof Error ? error.message : 'Error al actualizar el perfil',
-        details: error instanceof Error ? error.stack : undefined
-      }, 
+      { message: error instanceof Error ? error.message : 'Error al actualizar el perfil' },
       { status: 500 }
     );
   }

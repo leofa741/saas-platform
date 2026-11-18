@@ -8,6 +8,7 @@ import Image from 'next/image';
 import { AuthContext } from '../context/AuthContext';
 import Link from 'next/link';
 import { siteConfig } from '@/app/lib/config';
+import { getCurrentTenantId } from '@/app/lib/getCurrentTenantId'; // 👈 1. NUEVO: Importamos la función
 
 // ─────────────────────────────────────────────────────────────
 // ICONOS SVG PREMIUM (Adaptados a la paleta Candy)
@@ -128,7 +129,7 @@ export default function LoginForm() {
   }, [status, session, callbackUrl, setUserRole, router]);
 
   // ─────────────────────────────────────────────────────────
-  // HANDLER DE LOGIN
+  // HANDLER DE LOGIN (ACTUALIZADO PARA SAAS)
   // ─────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,14 +143,18 @@ export default function LoginForm() {
     setLoading(true);
 
     try {
+      // 👇 2. NUEVO: Obtenemos el tenantId automáticamente desde la URL del navegador
+      const tenantId = getCurrentTenantId();
+
       const res = await signIn('credentials', {
         redirect: false,
         email,
         password,
+        tenantId, // 👇 3. NUEVO: Se lo pasamos al backend de forma invisible
       });
 
       if (res?.error) {
-        toast.error('Credenciales incorrectas');
+        toast.error('Credenciales incorrectas o no perteneces a esta tienda');
         setError('Email o contraseña inválidos');
         generateCaptcha(); // Regenerar captcha tras error
       }
@@ -162,11 +167,14 @@ export default function LoginForm() {
   };
 
   const handleGoogleLogin = async () => {
+    // Nota: Para Google, el backend (auth.ts) ya tiene un fallback inteligente.
+    // Si el usuario es nuevo, se le asigna el DEFAULT_TENANT_ID. 
+    // Si ya existe, usa su tenantId guardado. No necesitamos cambiar nada aquí por ahora.
     await signIn('google', { callbackUrl });
   };
 
   // ─────────────────────────────────────────────────────────
-  // LOADING STATE (Estilo Candy)
+  // LOADING STATE
   // ─────────────────────────────────────────────────────────
   if (status === 'loading') {
     return (
@@ -199,11 +207,11 @@ export default function LoginForm() {
         <div className="relative mt-30 bg-white/80 backdrop-blur-2xl rounded-[2rem] p-8 sm:p-10 border border-rose-100 shadow-[0_25px_50px_-12px_rgba(253,164,175,0.25)]">
 
           {/* Logo */}
-          <div className="flex justify-center  mb-8">
+          <div className="flex justify-center mb-8">
             <div className="relative group">
               <span className="absolute inset-0 bg-gradient-to-r from-rose-300 to-pink-300 rounded-2xl blur-xl opacity-0 group-hover:opacity-40 transition-opacity duration-700" aria-hidden="true" />
               <Image
-                src={siteConfig.logo} 
+                src={siteConfig.logo.src} 
                 alt={siteConfig.companyName}
                 width={200}
                 height={80}

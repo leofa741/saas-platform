@@ -1,4 +1,3 @@
-// api/gestion/productos/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongoose';
 import ProductoModel from '@/app/models/Producto';
@@ -14,10 +13,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }
 
         await connectDB();
-        const producto = await ProductoModel.findById((await params).id);
+        const { id } = await params;
+
+        // 👈 NUEVO SAAS: Buscar por ID Y por tenantId
+        const producto = await ProductoModel.findOne({ _id: id, tenantId: admin.tenantId });
 
         if (!producto) {
-            return NextResponse.json({ message: 'Producto no encontrado' }, { status: 404 });
+            return NextResponse.json({ message: 'Producto no encontrado o no pertenece a tu tienda' }, { status: 404 });
         }
 
         return NextResponse.json({ success: true, producto }, { status: 200 });
@@ -36,13 +38,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         }
 
         await connectDB();
+        const { id } = await params;
         const body = await req.json();
         
-        // 👈 NUEVO: Agregamos 'subcategoria' aquí
         const {
-            nombre, descripcion, categoria, subcategoria, stock,precioMayorista,  insumos, tiempoManoDeObraMinutos,
-            valorHoraManoDeObra, margenGananciaPorcentaje, precioFinalManual, imagen, destacado, nuevo
+            nombre, descripcion, categoria, subcategoria, stock, precioMayorista, insumos, 
+            tiempoManoDeObraMinutos, valorHoraManoDeObra, margenGananciaPorcentaje, 
+            precioFinalManual, imagen, destacado, nuevo
         } = body;
+
+        // 👈 NUEVO SAAS: Verificar que el producto exista y pertenezca a este tenant antes de editar
+        const productoExistente = await ProductoModel.findOne({ _id: id, tenantId: admin.tenantId });
+        if (!productoExistente) {
+            return NextResponse.json({ message: 'Producto no encontrado o no tienes permiso para editarlo' }, { status: 404 });
+        }
 
         let updateData: any = {};
 
@@ -52,9 +61,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             const insumosDetallados = [];
 
             for (const item of insumos) {
-                const insumo = await InsumoModel.findById(item.insumoId);
+                // 👈 NUEVO SAAS: Validar que el insumo también pertenezca a este tenant
+                const insumo = await InsumoModel.findOne({ _id: item.insumoId, tenantId: admin.tenantId });
                 if (!insumo) {
-                    return NextResponse.json({ message: `El insumo con ID ${item.insumoId} no existe.` }, { status: 400 });
+                    return NextResponse.json({ message: `El insumo con ID ${item.insumoId} no existe o no pertenece a tu tienda.` }, { status: 400 });
                 }
 
                 const costoPorUnidad = insumo.costo / insumo.cantidadPaquete;
@@ -95,26 +105,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         if (nombre !== undefined) updateData.nombre = nombre.trim();
         if (descripcion !== undefined) updateData.descripcion = descripcion.trim();
         if (categoria !== undefined) updateData.categoria = categoria;
-        
-        // 👈 NUEVO: Actualización de la subcategoría
         if (subcategoria !== undefined) updateData.subcategoria = subcategoria;
         if (stock !== undefined) updateData.stock = Number(stock);
         if (precioMayorista !== undefined) updateData.precioMayorista = Number(precioMayorista);
-        
         if (precioFinalManual !== undefined && !insumos) updateData.precioFinalManual = Number(precioFinalManual);
         if (imagen !== undefined) updateData.imagen = imagen;
         if (destacado !== undefined) updateData.destacado = destacado;
         if (nuevo !== undefined) updateData.nuevo = nuevo;
 
-        const productoActualizado = await ProductoModel.findByIdAndUpdate(
-            (await params).id, 
+        // 👈 NUEVO SAAS: Actualizar usando findOneAndUpdate con el filtro de tenant
+        const productoActualizado = await ProductoModel.findOneAndUpdate(
+            { _id: id, tenantId: admin.tenantId }, 
             { $set: updateData }, 
             { new: true, runValidators: true }
         );
-
-        if (!productoActualizado) {
-            return NextResponse.json({ message: 'Producto no encontrado' }, { status: 404 });
-        }
 
         return NextResponse.json({ 
             success: true, 
@@ -137,10 +141,16 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         }
 
         await connectDB();
-        const productoEliminado = await ProductoModel.findByIdAndDelete((await params).id);
+        const { id } = await params;
+
+        // 👈 NUEVO SAAS: Solo eliminar si el ID coincide con el tenantId del admin
+        const productoEliminado = await ProductoModel.findOneAndDelete({ 
+            _id: id, 
+            tenantId: admin.tenantId 
+        });
 
         if (!productoEliminado) {
-            return NextResponse.json({ message: 'Producto no encontrado' }, { status: 404 });
+            return NextResponse.json({ message: 'Producto no encontrado o no tienes permiso para eliminarlo' }, { status: 404 });
         }
 
         return NextResponse.json({ success: true, message: 'Producto eliminado' }, { status: 200 });

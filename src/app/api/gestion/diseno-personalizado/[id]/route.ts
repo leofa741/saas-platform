@@ -7,24 +7,30 @@ import UserModel from '@/app/models/User';
 // ✅ GET: Obtener detalle de un diseño (cliente o admin)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    // 🔑 CORRECCIÓN: Quitar el 'secret' forzado. Usará NEXTAUTH_SECRET automáticamente
     const token = await getToken({ req });
     if (!token || !token.id) {
       return NextResponse.json({ message: 'No autorizado (Sesión inválida)' }, { status: 401 });
     }
 
     await connectDB();
-    const diseno = await DisenoPersonalizadoModel.findById((await params).id).lean() as any;
+    const { id } = await params;
+    
+    // 👈 NUEVO SAAS: Extraer tenantId y rol
+    const tenantId = (token as any).tenantId;
+    const role = token.role as string;
+    const isClient = role === 'user' || role === 'cliente';
 
-    if (!diseno) {
-      return NextResponse.json({ message: 'Diseño no encontrado' }, { status: 404 });
+    // 🎯 LA CLAVE: La consulta SIEMPRE debe incluir tenantId.
+    // Si es cliente, además exigimos que el campo 'cliente' coincida con su ID.
+    const query: any = { _id: id, tenantId };
+    if (isClient) {
+      query.cliente = token.id;
     }
 
-    // 🔒 Si es cliente, solo puede ver los suyos
-    if (token.role === 'user' || token.role === 'cliente') {
-      if (String(diseno.cliente) !== String(token.id)) {
-        return NextResponse.json({ message: 'No autorizado a ver este diseño' }, { status: 403 });
-      }
+    const diseno = await DisenoPersonalizadoModel.findOne(query).lean() as any;
+
+    if (!diseno) {
+      return NextResponse.json({ message: 'Diseño no encontrado o no tienes permiso para verlo' }, { status: 404 });
     }
 
     return NextResponse.json({ success: true, diseno });
@@ -43,11 +49,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     await connectDB();
+    const { id } = await params;
     const body = await req.json();
     const { estado, mensaje, imagenMensaje } = body;
 
-    const diseno = await DisenoPersonalizadoModel.findById((await params).id);
-    if (!diseno) return NextResponse.json({ message: 'Diseño no encontrado' }, { status: 404 });
+    const tenantId = (token as any).tenantId;
+
+    // 👈 NUEVO SAAS 1: Buscar el diseño SOLO si pertenece a este tenant
+    const diseno = await DisenoPersonalizadoModel.findOne({ _id: id, tenantId });
+    if (!diseno) {
+      return NextResponse.json({ message: 'Diseño no encontrado o no pertenece a tu tienda' }, { status: 404 });
+    }
 
     if (estado) {
       diseno.estado = estado;
@@ -55,7 +67,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     if (mensaje?.trim()) {
-      const adminUser = await UserModel.findById(token.id);
+      // 👈 NUEVO SAAS 2: Buscar al admin verificando también su tenantId
+      const adminUser = await UserModel.findOne({ _id: token.id, tenantId });
+      
       diseno.mensajes.push({
         autor: 'admin',
         nombreAutor: adminUser?.name || 'Equipo',
@@ -82,19 +96,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     await connectDB();
+    const { id } = await params;
     const body = await req.json();
     const { mensaje, accion } = body;
 
-    const diseno = await DisenoPersonalizadoModel.findById((await params).id);
-    if (!diseno) return NextResponse.json({ message: 'Diseño no encontrado' }, { status: 404 });
+    const tenantId = (token as any).tenantId;
 
-    // 🔒 Verificar que sea el dueño
-    if (String(diseno.cliente) !== String(token.id)) {
-      return NextResponse.json({ message: 'No autorizado' }, { status: 403 });
+    // 🎯 DEFENSA EN PROFUNDIDAD: El documento DEBE coincidir en ID, tenantId Y cliente.
+    // Si falla cualquiera de los tres, devuelve 404.
+    const diseno = await DisenoPersonalizadoModel.findOne({
+      _id: id,
+      tenantId,
+      cliente: token.id
+    });
+
+    if (!diseno) {
+      return NextResponse.json({ message: 'Diseño no encontrado o no tienes permiso' }, { status: 404 });
     }
 
     if (mensaje?.trim()) {
-      const user = await UserModel.findById(token.id);
+      // 👈 NUEVO SAAS: Buscar al cliente verificando su tenantId
+      const user = await UserModel.findOne({ _id: token.id, tenantId });
+      
       diseno.mensajes.push({
         autor: 'cliente',
         nombreAutor: user?.name || 'Cliente',

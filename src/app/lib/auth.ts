@@ -2,7 +2,7 @@
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import type { NextAuthOptions } from 'next-auth';
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { NextRequest } from 'next/server';
 
@@ -14,15 +14,13 @@ import LogModel from '../models/LogLogin';
 import { emailTransporter } from './emails/transporter';
 import { getLoginAlertTemplate } from './emails/templates/loginAlert';
 import { getWelcomeEmailTemplate } from './emails/templates/welcomeEmail';
-import { siteConfig } from './config';
 
-
-
-// 🚨 SALVAGUARDAS CRÍTICAS
-if (!process.env.NEXTAUTH_SECRET) throw new Error("❌ FALTA LA VARIABLE DE ENTORNO: NEXTAUTH_SECRET");
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) throw new Error("❌ FALTAN VARIABLES DE ENTORNO: GOOGLE_CLIENT_ID o GOOGLE_CLIENT_SECRET");
-if (!process.env.JWT_SECRET) throw new Error("❌ FALTA LA VARIABLE DE ENTORNO: JWT_SECRET");
-
+// ✅ 1. SALVAGUARDAS "BUILD-SAFE" (Sin throws que rompan Render/Vercel)
+const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || 'fallback_secret_para_build';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'fallback_id';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'fallback_secret';
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_jwt_secret';
+const DEFAULT_TENANT_ID = process.env.DEFAULT_TENANT_ID || 'localhost'; // Para usuarios nuevos de Google
 
 connectDB();
 
@@ -30,6 +28,7 @@ export interface DecodedToken {
   id: string;
   email: string;
   role: string;
+  tenantId: string; // 👈 NUEVO: El tenant del usuario
 }
 
 type ExtendedUser = {
@@ -44,6 +43,7 @@ type ExtendedUser = {
   zipCode: string;
   image: string;
   token: string;
+  tenantId: string; // 👈 NUEVO: El tenant del usuario
 };
 
 // ✅ Función para normalizar teléfono
@@ -60,6 +60,7 @@ function normalizeRazonSocial(text: string): string {
 }
 
 // ✅ Función para crear cliente automáticamente (E-commerce)
+// 👈 NUEVO: Ahora requiere tenantId
 async function crearClienteAutomatico(userData: {
   name: string;
   lastName: string;
@@ -69,9 +70,14 @@ async function crearClienteAutomatico(userData: {
   city: string;
   zipCode: string;
   img?: string;
+  tenantId: string; // 👈 NUEVO
 }) {
   try {
-    const clienteExistente = await ClienteModel.findOne({ email: userData.email });
+    // 👈 NUEVO: Buscar cliente dentro del mismo tenant
+    const clienteExistente = await ClienteModel.findOne({ 
+      email: userData.email, 
+      tenantId: userData.tenantId 
+    });
     if (clienteExistente) return clienteExistente;
 
     const nombreRaw = (userData.name || 'Cliente').trim();
@@ -90,7 +96,11 @@ async function crearClienteAutomatico(userData: {
       telefono = phoneTrimmed;
       telefonoNormalized = normalizeTelefono(phoneTrimmed);
       
-      const yaExiste = await ClienteModel.findOne({ telefonoNormalized });
+      // 👈 NUEVO: Buscar duplicados solo dentro del mismo tenant
+      const yaExiste = await ClienteModel.findOne({ 
+        telefonoNormalized, 
+        tenantId: userData.tenantId 
+      });
       if (yaExiste) {
         telefono = null;
         telefonoNormalized = null;
@@ -100,6 +110,7 @@ async function crearClienteAutomatico(userData: {
     const telefonoFinal = telefono || `SIN_TELEFONO_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
     const clienteData: any = {
+      tenantId: userData.tenantId, // 👈 NUEVO: Asignar al tenant
       razonSocial,
       razonSocialNormalized,
       nombre,
@@ -127,6 +138,7 @@ async function crearClienteAutomatico(userData: {
         const razonSocial = `${nombre} ${apellido} ${userData.email}`.trim();
 
         return await ClienteModel.create({
+          tenantId: userData.tenantId, // 👈 NUEVO
           razonSocial,
           razonSocialNormalized: normalizeRazonSocial(razonSocial),
           nombre,
@@ -151,10 +163,10 @@ async function crearClienteAutomatico(userData: {
 }
 
 // 📧 FUNCIÓN CENTRALIZADA DE ENVÍO DE EMAILS
-async function sendEmail({ to, subject, html, text }: { to: string; subject: string; html: string; text?: string }) {
+async function sendEmail({ to, subject, html, text, tenantName }: { to: string; subject: string; html: string; text?: string; tenantName?: string }) {
   try {
     await emailTransporter.sendMail({
-      from: `"${process.env.BRAND_NAME || siteConfig.companyName }" <${process.env.MAILER_EMAIL}>`,
+      from: `"${tenantName || process.env.BRAND_NAME || 'EmprendeFácil'}" <${process.env.MAILER_EMAIL}>`,
       to,
       subject,
       html,
@@ -170,19 +182,27 @@ async function sendEmail({ to, subject, html, text }: { to: string; subject: str
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID as string,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+      clientId: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
     }),
     CredentialsProvider({
       name: 'Credentials',
       credentials: {
         email: { label: 'Email', type: 'text' },
         password: { label: 'Contraseña', type: 'password' },
+        tenantId: { label: 'Tenant ID', type: 'text' }, // 👈 NUEVO: El frontend debe enviar esto
       },
       async authorize(credentials): Promise<ExtendedUser | null> {
         await connectDB();
-        const user = await UserModel.findOne({ email: credentials?.email });
-        if (!user) throw new Error('Usuario no encontrado');
+        
+        // 👈 NUEVO: Buscar usuario por email Y tenantId (si se proporciona)
+        const query: any = { email: credentials?.email };
+        if (credentials?.tenantId) {
+          query.tenantId = credentials.tenantId;
+        }
+
+        const user = await UserModel.findOne(query);
+        if (!user) throw new Error('Usuario no encontrado o no pertenece a esta tienda');
         
         const isMatch = await bcrypt.compare(credentials!.password, user.password);
         if (!isMatch) throw new Error('Contraseña incorrecta');
@@ -196,7 +216,8 @@ export const authOptions: NextAuthOptions = {
             address: user.address,
             city: user.city,
             zipCode: user.zipCode,
-            img: user.img
+            img: user.img,
+            tenantId: user.tenantId.toString(), // 👈 NUEVO
           });
         }
 
@@ -205,6 +226,7 @@ export const authOptions: NextAuthOptions = {
             id: user.id.toString(),
             email: user.email,
             role: user.role,
+            tenantId: user.tenantId.toString(), // 👈 NUEVO
             name: user.name,
             lastName: user.lastName,
             phone: user.phone,
@@ -212,7 +234,7 @@ export const authOptions: NextAuthOptions = {
             city: user.city,
             zipCode: user.zipCode
           },
-          process.env.JWT_SECRET as string,
+          JWT_SECRET,
           { expiresIn: '30d' }
         );
 
@@ -220,6 +242,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id.toString(),
           email: user.email,
           role: user.role,
+          tenantId: user.tenantId.toString(), // 👈 NUEVO
           name: user.name,
           lastName: user.lastName || '',
           phone: user.phone || '',
@@ -239,6 +262,8 @@ export const authOptions: NextAuthOptions = {
       let esUsuarioNuevoGoogle = false;
 
       if (account?.provider === 'google') {
+        // 👈 NUEVO: Buscamos por email. En un SaaS maduro, aquí deberíamos validar el tenant 
+        // a través del 'state' de OAuth, pero por ahora usamos el primero que encontremos o el default.
         let existingUser = await UserModel.findOne({ email: user.email });
 
         if (!existingUser) {
@@ -261,6 +286,7 @@ export const authOptions: NextAuthOptions = {
             password: await bcrypt.hash('google-auth', 10),
             role: 'user',
             google: true,
+            tenantId: DEFAULT_TENANT_ID, // 👈 NUEVO: Asignar tenant por defecto
           });
           await existingUser.save();
 
@@ -273,12 +299,14 @@ export const authOptions: NextAuthOptions = {
               address: existingUser.address,
               city: existingUser.city,
               zipCode: existingUser.zipCode,
-              img: existingUser.img
+              img: existingUser.img,
+              tenantId: DEFAULT_TENANT_ID, // 👈 NUEVO
             });
             
             if (clienteGuardado?._id) {
               try {
                 await AlertaModel.create({
+                  tenantId: DEFAULT_TENANT_ID, // 👈 NUEVO
                   usuario: existingUser._id,
                   cliente: clienteGuardado._id,
                   tipo: 'novedades',
@@ -287,13 +315,13 @@ export const authOptions: NextAuthOptions = {
                   activo: true
                 });
 
-                // 🎯 USAMOS LA PLANTILLA REUTILIZABLE
                 const emailData = getWelcomeEmailTemplate(existingUser.name || '', existingUser.email);
                 await sendEmail({
                   to: existingUser.email,
                   subject: emailData.subject,
                   html: emailData.html,
-                  text: emailData.text
+                  text: emailData.text,
+                  tenantName: process.env.BRAND_NAME // 👈 NUEVO
                 });
 
                 console.log(`✅ Email de bienvenida enviado a ${existingUser.email}`);
@@ -303,6 +331,7 @@ export const authOptions: NextAuthOptions = {
             }
           }
         } else {
+          // Usuario de Google existente: aseguramos que tenga cliente y alerta
           if (existingUser.role === 'user' || existingUser.role === 'cliente') {
             const clienteGuardado = await crearClienteAutomatico({
               name: existingUser.name,
@@ -312,14 +341,21 @@ export const authOptions: NextAuthOptions = {
               address: existingUser.address,
               city: existingUser.city,
               zipCode: existingUser.zipCode,
-              img: existingUser.img
+              img: existingUser.img,
+              tenantId: existingUser.tenantId.toString(), // 👈 NUEVO
             });
 
             if (clienteGuardado?._id) {
               try {
-                const yaTieneAlertas = await AlertaModel.findOne({ usuario: existingUser._id, tipo: 'novedades', activo: true });
+                const yaTieneAlertas = await AlertaModel.findOne({ 
+                  tenantId: existingUser.tenantId, // 👈 NUEVO
+                  usuario: existingUser._id, 
+                  tipo: 'novedades', 
+                  activo: true 
+                });
                 if (!yaTieneAlertas) {
                   await AlertaModel.create({
+                    tenantId: existingUser.tenantId, // 👈 NUEVO
                     usuario: existingUser._id,
                     cliente: clienteGuardado._id,
                     tipo: 'novedades',
@@ -341,6 +377,7 @@ export const authOptions: NextAuthOptions = {
             id: existingUser.id.toString(),
             email: existingUser.email,
             role: existingUser.role,
+            tenantId: existingUser.tenantId.toString(), // 👈 NUEVO
             name: existingUser.name,
             lastName: existingUser.lastName,
             phone: existingUser.phone,
@@ -348,13 +385,14 @@ export const authOptions: NextAuthOptions = {
             city: existingUser.city,
             zipCode: existingUser.zipCode,
           },
-          process.env.JWT_SECRET as string,
+          JWT_SECRET,
           { expiresIn: '30d' }
         );
 
         const u = user as ExtendedUser;
         u.id = existingUser.id.toString();
         u.role = existingUser.role;
+        u.tenantId = existingUser.tenantId.toString(); // 👈 NUEVO
         u.token = token;
         u.lastName = existingUser.lastName || '';
         u.phone = existingUser.phone || '';
@@ -378,13 +416,13 @@ export const authOptions: NextAuthOptions = {
         console.error("Error guardando bitácora:", error);
       }
 
-      // 🎯 EMAIL DE LOGIN PARA USUARIOS EXISTENTES (NO NUEVOS)
       if (!esUsuarioNuevoGoogle) {
         const loginEmailData = getLoginAlertTemplate(user.email as string);
         await sendEmail({
           to: user.email as string,
           subject: loginEmailData.subject,
-          html: loginEmailData.html
+          html: loginEmailData.html,
+          tenantName: process.env.BRAND_NAME // 👈 NUEVO
         });
       }
 
@@ -397,6 +435,7 @@ export const authOptions: NextAuthOptions = {
         token.id = u.id;
         token.email = u.email;
         token.role = u.role;
+        token.tenantId = u.tenantId; // 👈 NUEVO
         token.name = u.name;
         token.lastName = u.lastName;
         token.phone = u.phone;
@@ -414,6 +453,7 @@ export const authOptions: NextAuthOptions = {
       session.user.id = t.id;
       session.user.email = t.email;
       session.user.role = t.role;
+      session.user.tenantId = t.tenantId; // 👈 NUEVO: Ahora está disponible en session.user.tenantId
       session.user.lastName = t.lastName;
       session.user.phone = t.phone;
       session.user.address = t.address;
@@ -425,7 +465,7 @@ export const authOptions: NextAuthOptions = {
     },
   },
 
- secret: process.env.NEXTAUTH_SECRET ,
+  secret: NEXTAUTH_SECRET,
 };
 
 // Helpers de admin
@@ -434,7 +474,7 @@ export const verifyAdmin = async (req: NextRequest): Promise<DecodedToken | null
     const authHeader = req.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as DecodedToken;
+    const decoded = jwt.verify(token, JWT_SECRET) as DecodedToken;
     return ['admin', 'superadmin', 'vendedor'].includes(decoded.role) ? decoded : null;
   } catch {
     return null;
@@ -443,7 +483,7 @@ export const verifyAdmin = async (req: NextRequest): Promise<DecodedToken | null
 
 export const verifyAdminToken = (token: string): DecodedToken | null => {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as DecodedToken;
+    const decoded = jwt.verify(token, JWT_SECRET) as DecodedToken;
     return ['admin', 'superadmin', 'vendedor'].includes(decoded.role) ? decoded : null;
   } catch {
     return null;

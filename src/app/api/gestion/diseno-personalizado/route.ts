@@ -6,12 +6,10 @@ import UserModel from '@/app/models/User';
 
 import { emailTransporter } from '@/app/lib/emails/transporter';
 import { getNewDesignRequestAlertTemplate } from '@/app/lib/emails/templates/newDesignRequestAlert';
-import { siteConfig } from '@/app/lib/config';
 
 // ✅ POST: Cliente crea una nueva solicitud de diseño
 export async function POST(req: NextRequest) {
   try {
-    // 🔑 CORRECCIÓN: Quitar el 'secret' forzado. getToken usará NEXTAUTH_SECRET automáticamente
     const token = await getToken({ req });
     if (!token || !token.id) {
       return NextResponse.json({ message: 'No autorizado' }, { status: 401 });
@@ -32,12 +30,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const usuario = await UserModel.findById(token.id);
+    // 👈 NUEVO SAAS: Extraer el tenantId del token
+    const tenantId = (token as any).tenantId;
+
+    // 👈 NUEVO SAAS: Verificar que el usuario exista y pertenezca a este tenant
+    const usuario = await UserModel.findOne({ _id: token.id, tenantId });
     if (!usuario) {
-      return NextResponse.json({ message: 'Usuario no encontrado' }, { status: 404 });
+      return NextResponse.json({ message: 'Usuario no encontrado o no pertenece a esta tienda' }, { status: 404 });
     }
 
     const nuevoDiseno = await DisenoPersonalizadoModel.create({
+      tenantId, // 👈 NUEVO SAAS: Asignar el tenantId al diseño
       cliente: token.id,
       nombreCliente: `${usuario.name} ${usuario.lastName || ''}`.trim(),
       emailCliente: usuario.email,
@@ -60,14 +63,15 @@ export async function POST(req: NextRequest) {
       }]
     });
 
-    // 🚀 ENVIAR ALERTA POR EMAIL A ADMINS Y SUPERADMINS 
+    // 🚀 ENVIAR ALERTA POR EMAIL SOLO A LOS ADMINS DE ESTE TENANT
     try {
       const admins = await UserModel.find({ 
-        role: { $in: ['admin', 'superadmin'] } 
+        tenantId, // 👈 NUEVO SAAS: Solo buscar admins de esta tienda específica
+        role: { $in: ['admin', 'superadmin', 'vendedor'] } 
       }).select('email name');
 
       if (admins.length > 0) {
-        const adminPanelUrl = process.env.NEXT_APP_URL || siteConfig.compareUrl || 'http://localhost:3000';
+        const adminPanelUrl = process.env.NEXT_APP_URL || 'http://localhost:3000';
         const productTypeLabel = tipoProducto.replace('_', ' ').toUpperCase();
 
         const emailData = getNewDesignRequestAlertTemplate(
@@ -80,7 +84,7 @@ export async function POST(req: NextRequest) {
 
         for (const admin of admins) {
           await emailTransporter.sendMail({
-            from: `"${process.env.BRAND_NAME || siteConfig.companyName }" <${process.env.MAILER_EMAIL}>`,
+            from: `"${process.env.BRAND_NAME || 'EmprendeFácil'}" <${process.env.MAILER_EMAIL}>`,
             to: admin.email,
             subject: emailData.subject,
             html: emailData.html,
@@ -88,10 +92,11 @@ export async function POST(req: NextRequest) {
           });
         }
         
-        console.log(`✅ Alerta de nuevo diseño enviada a ${admins.length} administrador(es).`);
+        console.log(`✅ Alerta de nuevo diseño enviada a ${admins.length} administrador(es) del tenant ${tenantId}.`);
       }
     } catch (emailError) {
       console.error('⚠️ Error enviando alertas de nuevo diseño a admins:', emailError);
+      // No fallamos la petición si el email falla, solo lo logueamos
     }
 
     return NextResponse.json({
@@ -106,10 +111,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ✅ GET: Cliente lista SUS diseños (o Admin lista TODOS)
+// ✅ GET: Cliente lista SUS diseños (o Admin lista LOS DE SU TIENDA)
 export async function GET(req: NextRequest) {
   try {
-    // 🔑 CORRECCIÓN: getToken lee la cookie de NextAuth automáticamente con la clave correcta
     const token = await getToken({ req });
     
     if (!token || !token.id) {
@@ -118,12 +122,19 @@ export async function GET(req: NextRequest) {
 
     await connectDB();
 
-    // 🎯 LA CLAVE: Si es admin/superadmin/vendedor, ve todos. Si es 'user', ve solo los suyos.
+    const tenantId = (token as any).tenantId;
+    const role = token.role as string;
+    const isSuperAdmin = role === 'superadmin';
+
+    // 🎯 LA CLAVE: Aislamiento estricto por tenantId
     let query: any = {};
-    if (token.role === 'admin' || token.role === 'superadmin' || token.role === 'vendedor') {
-      query = {}; // Ve todos los diseños
+    
+    if (isSuperAdmin) {
+      query = {}; // Superadmin ve todos los diseños del sistema (para soporte global)
+    } else if (['admin', 'vendedor'].includes(role)) {
+      query = { tenantId }; // Admin/Vendedor ve todos los diseños de SU tienda
     } else {
-      query = { cliente: token.id }; // Ve SOLO los diseños de este cliente
+      query = { cliente: token.id, tenantId }; // Usuario normal ve SOLO los suyos en SU tienda
     }
 
     const disenos = await DisenoPersonalizadoModel.find(query)

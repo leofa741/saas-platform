@@ -14,7 +14,12 @@ export async function GET(req: NextRequest) {
     const pagina = parseInt(searchParams.get('pagina') || '1', 10);
     const limite = parseInt(searchParams.get('limite') || '10', 10);
 
-    const query: any = { activo: true };
+    // 👈 NUEVO SAAS: Filtro base obligatorio por tenantId
+    const query: any = { 
+      activo: true, 
+      tenantId: admin.tenantId 
+    };
+    
     if (busqueda) {
       const regex = new RegExp(busqueda, 'i');
       query.$or = [
@@ -43,7 +48,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-
 export async function POST(req: NextRequest) {
   try {
     const admin = await verifyAdmin(req);
@@ -57,7 +61,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'El nombre y el teléfono son obligatorios.' }, { status: 400 });
     }
 
+    // 👈 NUEVO SAAS: Asignar el tenantId al crear el cliente
+    // Esto también activará el hook pre-save del modelo que verifica duplicados SOLO dentro de este tenant
     const nuevoCliente = await ClienteModel.create({
+      tenantId: admin.tenantId, 
       nombre: nombre.trim(),
       apellido: apellido?.trim() || '',
       telefono: telefono.trim(),

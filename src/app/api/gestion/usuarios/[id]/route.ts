@@ -41,14 +41,18 @@ export async function PATCH(
 
     await connectDB();
 
-    const updatedUser = await UserModel.findByIdAndUpdate(
-      id,
+    // 👈 NUEVO SAAS: Asegurar que el usuario a modificar pertenezca a este tenant 
+    // (o permitir la búsqueda global solo si es superadmin)
+    const query = admin.role === 'superadmin' ? { _id: id } : { _id: id, tenantId: admin.tenantId };
+
+    const updatedUser = await UserModel.findOneAndUpdate(
+      query,
       { role },
       { new: true, runValidators: true }
     ).select('-password -resetPasswordToken -resetPasswordExpires');
 
     if (!updatedUser) {
-      return NextResponse.json({ message: 'Usuario no encontrado' }, { status: 404 });
+      return NextResponse.json({ message: 'Usuario no encontrado o no pertenece a tu tienda' }, { status: 404 });
     }
 
     return NextResponse.json({ 
