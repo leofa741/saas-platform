@@ -1,43 +1,81 @@
-// src/app/api/seed-tenant/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/app/lib/mongoose';
 import TenantModel from '@/app/models/Tenant';
+import UserModel from '@/app/models/User';
+import bcrypt from 'bcrypt';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     await connectDB();
+    const { searchParams } = new URL(req.url);
+    
+    // Leemos el parámetro ?create=... (por defecto es 'prettywitches')
+    const target = searchParams.get('create') || 'prettywitches';
 
-    // 1. Verificar si ya existe un tenant (para no duplicar)
-    const existingTenant = await TenantModel.findOne({ subdomain: 'localhost' });
+    // ==========================================
+    // OPCIÓN A: Crear el tenant "Maktub" (Ana)
+    // ==========================================
+    if (target === 'maktub') {
+      const existingTenant = await TenantModel.findOne({ subdomain: 'maktub' });
+      if (existingTenant) {
+        return NextResponse.json({ 
+          message: '✅ El tenant "Maktub" ya existe en la base de datos.',
+          tenant: existingTenant 
+        });
+      }
 
-    if (existingTenant) {
+      // 1. Crear el Tenant
+      const newTenant = await TenantModel.create({
+        nombre: 'Maktub Decoración',
+        subdomain: 'maktub',
+        email: 'infoplataformaweb@gmail.com',
+        plan: 'basic',
+        activo: true,
+        config: {
+          colores: { primary: '#1e293b', secondary: '#f59e0b' }, // Colores distintos para notar la diferencia
+          logoUrl: '/favicon.ico',
+          whatsapp: '5491100000000',
+          description: 'Tienda de prueba de Maktub para validar el aislamiento del SaaS.',
+        },
+      });
+
+  
+
       return NextResponse.json({ 
-        message: '✅ El tenant de prueba ya existe en la base de datos.',
-        tenant: existingTenant 
+        message: '🎉 ¡Tenant "Maktub" y usuario "Ana" creados exitosamente!',
+        instrucciones: 'Ahora ve a /login e ingresa con: infoplataformaweb@gmail.com / ana123',
+        tenantId: newTenant._id
       });
     }
 
-    // 2. Si no existe, lo creamos con los datos de Pretty Witches (o Tienda Demo)
-    const newTenant = await TenantModel.create({
+    // ==========================================
+    // OPCIÓN B: Crear el tenant "Pretty Witches" (Tú)
+    // ==========================================
+    const existingTenantLocal = await TenantModel.findOne({ subdomain: 'localhost' });
+    if (existingTenantLocal) {
+      return NextResponse.json({ 
+        message: '✅ El tenant de prueba (localhost) ya existe.',
+        tenant: existingTenantLocal 
+      });
+    }
+
+    const newTenantLocal = await TenantModel.create({
       nombre: 'Pretty Witches (Demo)',
-      subdomain: 'localhost', // Usamos 'localhost' para que funcione en tu PC local
+      subdomain: 'localhost',
       email: 'hola.prettywitches@gmail.com',
       plan: 'premium',
       activo: true,
       config: {
-        colores: {
-          primary: '#3D2B1F',
-          secondary: '#C9A961',
-        },
+        colores: { primary: '#3D2B1F', secondary: '#C9A961' },
         logoUrl: '/img/logo-pretty1-removebg-preview1.png',
         whatsapp: '5491132835127',
-        description: 'En Pretty Witches creemos que lo que llevas puesto debe resonar con quien sos. Por eso, creamos cada pieza de bijouterie y macramé no solo por su estética, sino por la intención y la energía que le ponemos al hacerla realidad.',
+        description: 'En Pretty Witches creemos que lo que llevas puesto debe resonar con quien sos.',
       },
     });
 
     return NextResponse.json({ 
-      message: '🎉 ¡Tenant creado exitosamente en la base de datos!',
-      tenant: newTenant 
+      message: '🎉 ¡Tenant "Pretty Witches" creado exitosamente!',
+      tenant: newTenantLocal 
     });
 
   } catch (error) {

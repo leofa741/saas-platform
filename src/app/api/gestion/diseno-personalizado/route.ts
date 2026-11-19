@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt';
 import connectDB from '@/app/lib/mongoose';
 import DisenoPersonalizadoModel from '@/app/models/DisenoPersonalizado';
 import UserModel from '@/app/models/User';
+import TenantModel from '@/app/models/Tenant'; // 👈 CORREGIDO: Importamos el modelo Tenant
 
 import { emailTransporter } from '@/app/lib/emails/transporter';
 import { getNewDesignRequestAlertTemplate } from '@/app/lib/emails/templates/newDesignRequestAlert';
@@ -65,6 +66,10 @@ export async function POST(req: NextRequest) {
 
     // 🚀 ENVIAR ALERTA POR EMAIL SOLO A LOS ADMINS DE ESTE TENANT
     try {
+      // 👈 CORREGIDO: Obtenemos el nombre real de la tienda para los correos
+      const tenant = await TenantModel.findById(tenantId);
+      const dynamicBrandName = tenant?.nombre || 'EmprendeFácil';
+
       const admins = await UserModel.find({ 
         tenantId, // 👈 NUEVO SAAS: Solo buscar admins de esta tienda específica
         role: { $in: ['admin', 'superadmin', 'vendedor'] } 
@@ -74,17 +79,20 @@ export async function POST(req: NextRequest) {
         const adminPanelUrl = process.env.NEXT_APP_URL || 'http://localhost:3000';
         const productTypeLabel = tipoProducto.replace('_', ' ').toUpperCase();
 
+        // 👈 CORREGIDO: Ahora pasamos los 6 argumentos, incluyendo dynamicBrandName al final
         const emailData = getNewDesignRequestAlertTemplate(
           nuevoDiseno.nombreCliente,
           productTypeLabel,
           nuevoDiseno.titulo,
           adminPanelUrl,
-          nuevoDiseno._id.toString()
+          nuevoDiseno._id.toString(),
+          dynamicBrandName // 👈 ¡Este es el 6to argumento que faltaba!
         );
 
         for (const admin of admins) {
           await emailTransporter.sendMail({
-            from: `"${process.env.BRAND_NAME || 'EmprendeFácil'}" <${process.env.MAILER_EMAIL}>`,
+            // 👈 CORREGIDO: Usamos el nombre dinámico en el remitente
+            from: `"${dynamicBrandName}" <${process.env.MAILER_EMAIL}>`,
             to: admin.email,
             subject: emailData.subject,
             html: emailData.html,
@@ -92,7 +100,7 @@ export async function POST(req: NextRequest) {
           });
         }
         
-        console.log(`✅ Alerta de nuevo diseño enviada a ${admins.length} administrador(es) del tenant ${tenantId}.`);
+        console.log(`✅ Alerta de nuevo diseño enviada a ${admins.length} administrador(es) de ${dynamicBrandName}.`);
       }
     } catch (emailError) {
       console.error('⚠️ Error enviando alertas de nuevo diseño a admins:', emailError);

@@ -7,6 +7,7 @@ export const getWelcomeEmailTemplate = (userName: string, email: string) => {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_APP_URL || 'https://www.prettywitches.com.ar';
   const displayName = userName || email.split('@')[0];
 
+
   return {
     subject: `✨ ¡Bienvenido a ${brandName} + Alerta de Novedades activada!`,
     html: `
@@ -62,13 +63,7 @@ export const getWelcomeEmailTemplate = (userName: string, email: string) => {
           <p class="info-detail">🎁 <strong>Beneficio:</strong> Acceso anticipado y ofertas exclusivas</p>
         </div>
 
-        <p style="font-size: 15px; line-height: 1.6; color: #6B5B4F; margin-bottom: 0;">
-          Recibirás un email cada semana con las últimas creaciones y descuentos especiales. Podés gestionar tus preferencias en cualquier momento.
-        </p>
-        
-        <div style="text-align: center; margin-top: 24px;">
-          <a href="${baseUrl}/perfil/alertas" class="cta-button">Gestionar mis alertas →</a>
-        </div>
+       
 
         <p class="quote">
           "¿Tenés una idea en mente? Respondé este email y te ayudamos a hacerla realidad."

@@ -14,6 +14,7 @@ import LogModel from '../models/LogLogin';
 import { emailTransporter } from './emails/transporter';
 import { getLoginAlertTemplate } from './emails/templates/loginAlert';
 import { getWelcomeEmailTemplate } from './emails/templates/welcomeEmail';
+import TenantModel from '../models/Tenant'; // 👈 Agrega esta línea junto a los otros imports
 
 // ✅ 1. SALVAGUARDAS "BUILD-SAFE" (Sin throws que rompan Render/Vercel)
 const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || 'fallback_secret_para_build';
@@ -74,17 +75,17 @@ async function crearClienteAutomatico(userData: {
 }) {
   try {
     // 👈 NUEVO: Buscar cliente dentro del mismo tenant
-    const clienteExistente = await ClienteModel.findOne({ 
-      email: userData.email, 
-      tenantId: userData.tenantId 
+    const clienteExistente = await ClienteModel.findOne({
+      email: userData.email,
+      tenantId: userData.tenantId
     });
     if (clienteExistente) return clienteExistente;
 
     const nombreRaw = (userData.name || 'Cliente').trim();
     const apellidoRaw = (userData.lastName || '').trim();
     const nombre = nombreRaw || 'Cliente';
-    const apellido = apellidoRaw || 'Cliente'; 
-    
+    const apellido = apellidoRaw || 'Cliente';
+
     const razonSocial = `${nombre} ${apellido} ${userData.email}`.trim();
     const razonSocialNormalized = normalizeRazonSocial(razonSocial);
 
@@ -95,11 +96,11 @@ async function crearClienteAutomatico(userData: {
     if (phoneTrimmed && phoneTrimmed !== '00000000' && /[\d+]/.test(phoneTrimmed)) {
       telefono = phoneTrimmed;
       telefonoNormalized = normalizeTelefono(phoneTrimmed);
-      
+
       // 👈 NUEVO: Buscar duplicados solo dentro del mismo tenant
-      const yaExiste = await ClienteModel.findOne({ 
-        telefonoNormalized, 
-        tenantId: userData.tenantId 
+      const yaExiste = await ClienteModel.findOne({
+        telefonoNormalized,
+        tenantId: userData.tenantId
       });
       if (yaExiste) {
         telefono = null;
@@ -194,7 +195,7 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials): Promise<ExtendedUser | null> {
         await connectDB();
-        
+
         // 👈 NUEVO: Buscar usuario por email Y tenantId (si se proporciona)
         const query: any = { email: credentials?.email };
         if (credentials?.tenantId) {
@@ -203,7 +204,7 @@ export const authOptions: NextAuthOptions = {
 
         const user = await UserModel.findOne(query);
         if (!user) throw new Error('Usuario no encontrado o no pertenece a esta tienda');
-        
+
         const isMatch = await bcrypt.compare(credentials!.password, user.password);
         if (!isMatch) throw new Error('Contraseña incorrecta');
 
@@ -268,7 +269,7 @@ export const authOptions: NextAuthOptions = {
 
         if (!existingUser) {
           esUsuarioNuevoGoogle = true;
-          
+
           const fullName = user.name || 'Cliente';
           const nameParts = fullName.split(' ');
           const firstName = nameParts[0];
@@ -302,7 +303,7 @@ export const authOptions: NextAuthOptions = {
               img: existingUser.img,
               tenantId: DEFAULT_TENANT_ID, // 👈 NUEVO
             });
-            
+
             if (clienteGuardado?._id) {
               try {
                 await AlertaModel.create({
@@ -347,11 +348,11 @@ export const authOptions: NextAuthOptions = {
 
             if (clienteGuardado?._id) {
               try {
-                const yaTieneAlertas = await AlertaModel.findOne({ 
+                const yaTieneAlertas = await AlertaModel.findOne({
                   tenantId: existingUser.tenantId, // 👈 NUEVO
-                  usuario: existingUser._id, 
-                  tipo: 'novedades', 
-                  activo: true 
+                  usuario: existingUser._id,
+                  tipo: 'novedades',
+                  activo: true
                 });
                 if (!yaTieneAlertas) {
                   await AlertaModel.create({
@@ -416,13 +417,31 @@ export const authOptions: NextAuthOptions = {
         console.error("Error guardando bitácora:", error);
       }
 
+    
+
       if (!esUsuarioNuevoGoogle) {
-        const loginEmailData = getLoginAlertTemplate(user.email as string);
+        // 1. Obtenemos el tenantId del usuario que acaba de iniciar sesión
+        const currentTenantId = (user as any).tenantId;
+
+        // 2. Buscamos el nombre real de su tienda en la BD (con fallback por seguridad)
+        let dynamicBrandName = process.env.BRAND_NAME || 'EmprendeFácil';
+
+        if (currentTenantId) {
+          const tenant = await TenantModel.findById(currentTenantId);
+          if (tenant && tenant.nombre) {
+            dynamicBrandName = tenant.nombre; // 👈 ¡Aquí está la magia!
+          }
+        }
+
+        // 3. Generamos la plantilla pasándole el nombre DINÁMICO
+        const loginEmailData = getLoginAlertTemplate(user.email as string, dynamicBrandName);
+
+        // 4. Enviamos el correo usando ese nombre dinámico tanto en el contenido como en el "From"
         await sendEmail({
           to: user.email as string,
           subject: loginEmailData.subject,
           html: loginEmailData.html,
-          tenantName: process.env.BRAND_NAME // 👈 NUEVO
+          tenantName: dynamicBrandName // 👈 Esto hace que el remitente diga "Maktub" en vez de "Pretty Witches"
         });
       }
 
